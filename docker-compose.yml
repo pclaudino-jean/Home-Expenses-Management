@@ -4,8 +4,6 @@
 # This uses the official Supabase self-hosted images.
 # For full Supabase self-hosting docs: https://supabase.com/docs/guides/self-hosting/docker
 
-#version: "3.8"
-
 services:
   db:
     image: supabase/postgres:15.1.1.78
@@ -17,9 +15,10 @@ services:
       POSTGRES_DB: postgres
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./supabase/migrations:/docker-entrypoint-initdb.d
-      - ./docker/db/init:/docker-entrypoint-initdb.d
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+      # optional: keep these mounted so our init script can run them once on fresh DB
+      - ./supabase/migrations:/supabase-migrations:ro
+      - ./db/init:/app-init:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -32,23 +31,31 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "9999:9999"
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
       API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:8000}
+
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-your-super-secret-password}@db:5432/postgres
+      GOTRUE_DB_NAMESPACE: auth
+      # Force auth schema for runtime queries too:
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-your-super-secret-password}@db:5432/postgres?options=-c%20search_path%3Dauth
+
       GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
       GOTRUE_URI_ALLOW_LIST: ""
       GOTRUE_DISABLE_SIGNUP: "false"
+
       GOTRUE_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+
       GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
       GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_EXTERNAL_HOSTS: ${GOTRUE_MAILER_EXTERNAL_HOSTS:-localhost}
+
       GOTRUE_LOG_LEVEL: DEBUG
-    ports:
-      - "9999:9999"
 
   rest:
     image: postgrest/postgrest:v12.2.3
@@ -56,14 +63,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "3001:3000"
     environment:
       PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:-your-super-secret-password}@db:5432/postgres
       PGRST_DB_SCHEMAS: public,storage
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-token-with-at-least-32-characters-long}
       PGRST_DB_USE_LEGACY_GUCS: "false"
-    ports:
-      - "3001:3000"
 
   kong:
     image: kong:2.8.1
@@ -81,8 +88,22 @@ services:
     volumes:
       - ./docker/kong.yml:/var/lib/kong/kong.yml:ro
 
+  meta:
+    image: supabase/postgres-meta:v0.83.2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-your-super-secret-password}
+
   studio:
-    image: supabase/studio@sha256:3d03021957453447c1d2e79d4ee1f1df8b7d6f750162b8c8ee893b80640183a5
+    image: supabase/studio:latest
     restart: unless-stopped
     depends_on:
       - kong
@@ -102,20 +123,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 3
-
-  meta:
-    image: supabase/postgres-meta:v0.83.2
-    restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      PG_META_PORT: 8080
-      PG_META_DB_HOST: db
-      PG_META_DB_PORT: 5432
-      PG_META_DB_NAME: postgres
-      PG_META_DB_USER: supabase_admin
-      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-your-super-secret-password}
 
   frontend:
     build:
