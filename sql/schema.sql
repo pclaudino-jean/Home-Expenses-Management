@@ -133,8 +133,22 @@ CREATE POLICY "Members can view group members"
   USING (public.is_group_member(auth.uid(), group_id));
 
 CREATE POLICY "Group admins can add members"
-  ON public.group_members FOR INSERT TO authenticated
-  WITH CHECK (public.is_group_admin(auth.uid(), group_id));
+  ON public.group_members
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    public.is_group_admin(auth.uid(), group_id)
+    OR (
+      user_id = auth.uid()
+      AND role_in_group = 'admin'
+      AND EXISTS (
+        SELECT 1
+        FROM public.groups g
+        WHERE g.id = group_id
+          AND g.created_by = auth.uid()
+      )
+    )
+  );
 
 CREATE POLICY "Group admins can update members"
   ON public.group_members FOR UPDATE TO authenticated
