@@ -115,9 +115,11 @@ AS $$
 $$;
 
 -- Groups policies
-CREATE POLICY "Members can view their groups"
-  ON public.groups FOR SELECT TO authenticated
-  USING (public.is_group_member(auth.uid(), id));
+-- CREATE POLICY "Members can view their groups"
+--   ON public.groups FOR SELECT TO authenticated
+--   USING (public.is_group_member(auth.uid(), id));
+
+CREATE POLICY "Members can view their groups" ON public.groups FOR SELECT USING (public.is_group_member(auth.uid(), id) OR created_by = auth.uid());
 
 CREATE POLICY "Authenticated users can create groups"
   ON public.groups FOR INSERT TO authenticated

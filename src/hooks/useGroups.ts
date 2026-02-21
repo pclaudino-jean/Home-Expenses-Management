@@ -92,34 +92,44 @@ export const useCreateGroup = () => {
     mutationFn: async (groupData: CreateGroupInput) => {
       if (!user) throw new Error('User not authenticated');
 
-      // 1) Create group
-      const { data: group, error: groupError } = await supabase
-        .from('groups')
-        .insert({
-          name: groupData.name,
-          description: groupData.description?.trim() || null,
-          currency: groupData.currency,
-          created_by: user.id,
-          members_can_edit_any_expense:
-            groupData.members_can_edit_any_expense ?? false,
-          members_can_delete_any_expense:
-            groupData.members_can_delete_any_expense ?? false,
-          is_archived: groupData.is_archived ?? false,
-        })
-        .select()
-        .single();
+      // Generate the group ID on the client so we don't depend on .insert().select()
+      // before the creator membership exists (RLS can block that select).
+      const groupId = crypto.randomUUID();
+
+      // 1) Create group (no immediate select)
+      const { error: groupError } = await supabase.from('groups').insert({
+        id: groupId,
+        name: groupData.name,
+        description: groupData.description?.trim() || null,
+        currency: groupData.currency,
+        created_by: user.id,
+        members_can_edit_any_expense:
+          groupData.members_can_edit_any_expense ?? false,
+        members_can_delete_any_expense:
+          groupData.members_can_delete_any_expense ?? false,
+        is_archived: groupData.is_archived ?? false,
+      });
 
       if (groupError) throw groupError;
 
       // 2) Add creator as admin member
       const { error: memberError } = await supabase.from('group_members').insert({
-        group_id: group.id,
+        group_id: groupId,
         user_id: user.id,
         role_in_group: 'admin',
         display_name: user.email?.split('@')[0] || 'Admin',
       });
 
       if (memberError) throw memberError;
+
+      // 3) Fetch the created group AFTER membership exists (RLS now allows select)
+      const { data: group, error: fetchError } = await supabase
+        .from('groups')
+        .select('*')
+        .eq('id', groupId)
+        .single();
+
+      if (fetchError) throw fetchError;
 
       return group as Group;
     },
