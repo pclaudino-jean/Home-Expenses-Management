@@ -57,12 +57,29 @@ services:
 
       GOTRUE_LOG_LEVEL: DEBUG
 
+  app-schema-init:
+    image: postgres:15
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your-super-secret-password}
+    volumes:
+      - ./docker/apply-app-schema.sh:/scripts/apply-app-schema.sh:ro
+      - ./sql:/sql:ro
+    entrypoint: ["bash", "/scripts/apply-app-schema.sh"]
+  
   rest:
     image: postgrest/postgrest:v12.2.3
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      app-schema-init:
+        condition: service_completed_successfully
     ports:
       - "3001:3000"
     environment:
